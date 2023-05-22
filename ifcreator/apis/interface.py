@@ -9,6 +9,7 @@ from ifclient.core import HttpClient
 from ifclient.core import TritonClient
 from iftool.web import get_responses
 
+from ifcreator import *
 
 """
 Pydantic 是一个 Python 库，用于数据解析和验证。它使用 Python 类型注解来验证、序列化和反序列化复杂的数据类型，如字典、JSON等。
@@ -30,6 +31,11 @@ constants = dict(
 # http client
 http_client = HttpClient()
 # triton client
+"""
+Triton Inference Server（前称为TensorRT Inference Server）是NVIDIA提供的开源软件，
+它可以部署在数据中心的AI模型，以提高利用率并实现更好的性能。
+Triton Inference Server支持AI模型的各种框架，包括TensorFlow、TensorRT、PyTorch等。
+"""
 triton_host = constants["triton_host"]
 if triton_host is None:
     triton_client = None
@@ -67,8 +73,18 @@ async def hello(data: HelloModel) -> HelloResponse:
     return await run_algorithm(all_algorithms["demo.hello"], data)
 
 
-if __name__ == "__main__":
-    import uvicorn
+# get prompt
+@app.post("/translate", responses=get_responses(GetPromptResponse))
+@app.post("/get_prompt", responses=get_responses(GetPromptResponse))
+def get_prompt(data: GetPromptModel) -> GetPromptResponse:
+    return GetPromptResponse(text=data.text, success=True, reason="")
 
-    # --reload参数使得服务器在你每次保存文件后自动重启
-    uvicorn.run("interface:app", host="0.0.0.0", port=8000, reload=True)
+
+"""
+这部分的代码只有在直接运行这个Python文件时才会执行。如果这个文件被其他Python文件导入，那么这部分的代码就不会执行
+"""
+# if __name__ == "__main__":
+#     import uvicorn
+#
+#     # --reload参数使得服务器在你每次保存文件后自动重启
+#     uvicorn.run("interface:app", host="0.0.0.0", port=8000, reload=True)

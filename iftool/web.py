@@ -5,13 +5,7 @@ from typing import Optional
 
 from .constants import WEB_ERR_CODE
 
-try:
-    from fastapi import Response
-    from fastapi import HTTPException
-    from pydantic import BaseModel
-except:
-    Response = HTTPException = None
-    BaseModel = object
+from pydantic import BaseModel
 
 
 class RuntimeError(BaseModel):
