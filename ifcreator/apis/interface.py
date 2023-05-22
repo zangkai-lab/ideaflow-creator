@@ -2,6 +2,7 @@ import os
 from fastapi import FastAPI
 from enum import Enum
 from typing import Dict
+from translate import Translator
 
 from ifclient.models import *
 from ifclient.utils import run_algorithm
@@ -74,10 +75,23 @@ async def hello(data: HelloModel) -> HelloResponse:
 
 
 # get prompt
+def translate_text(text: str) -> str:
+    translator = Translator(to_lang="en")
+    translation = translator.translate(text)
+    return translation
+
+
 @app.post("/translate", responses=get_responses(GetPromptResponse))
 @app.post("/get_prompt", responses=get_responses(GetPromptResponse))
 def get_prompt(data: GetPromptModel) -> GetPromptResponse:
-    return GetPromptResponse(text=data.text, success=True, reason="")
+    if data.need_translate:
+        try:
+            translated_text = translate_text(data.text)
+            return GetPromptResponse(text=translated_text, success=True, reason="")
+        except Exception as e:
+            return GetPromptResponse(text="", success=False, reason=str(e))
+    else:
+        return GetPromptResponse(text=data.text, success=True, reason="")
 
 
 """
