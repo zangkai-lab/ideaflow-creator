@@ -10,12 +10,12 @@ from typing import Union
 from typing import Optional
 from collections import Counter
 from dataclasses import dataclass
-from cftool.misc import print_info
-from cftool.misc import print_warning
-from cftool.misc import shallow_copy_dict
-from cftool.misc import ISerializable
-from cftool.misc import PureFromInfoMixin
-from cftool.array import is_float
+from iftool.misc import print_info
+from iftool.misc import print_warning
+from iftool.misc import shallow_copy_dict
+from iftool.misc import ISerializable
+from iftool.misc import PureFromInfoMixin
+from iftool.array import is_float
 
 from ....types import data_type
 from ....schema import DataTypes

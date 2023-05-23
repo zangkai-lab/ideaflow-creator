@@ -3,7 +3,7 @@ import numpy as np
 from enum import Enum
 from typing import Optional
 from typing import NamedTuple
-from cftool.types import np_dict_type
+from iftool.types import np_dict_type
 
 
 class MLDatasetTag(str, Enum):

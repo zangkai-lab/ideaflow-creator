@@ -5,7 +5,7 @@ from typing import Dict
 from typing import Tuple
 from typing import Optional
 from dataclasses import dataclass
-from cftool.misc import print_warning
+from iftool.misc import print_warning
 
 from .file import FileParserBlock
 from ....schema import DataTypes

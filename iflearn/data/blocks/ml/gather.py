@@ -2,7 +2,7 @@ import numpy as np
 
 from typing import Any
 from typing import Dict
-from cftool.array import is_float
+from iftool.array import is_float
 
 from .recognizer import RecognizerBlock
 from ....schema import DataBundle

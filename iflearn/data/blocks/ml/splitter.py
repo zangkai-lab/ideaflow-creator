@@ -9,9 +9,9 @@ from typing import Union
 from typing import Optional
 from typing import NamedTuple
 from dataclasses import dataclass
-from cftool.misc import print_warning
-from cftool.array import is_float
-from cftool.array import get_unique_indices
+from iftool.misc import print_warning
+from iftool.array import is_float
+from iftool.array import get_unique_indices
 
 from .recognizer import RecognizerBlock
 from ....schema import DataBundle
