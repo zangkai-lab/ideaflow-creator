@@ -1,6 +1,6 @@
 from typing import Any, Dict, Optional, Type, Callable, Generic, TypeVar
 from abc import ABCMeta, abstractmethod
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..core import HttpClient
 from ..core import TritonClient
@@ -98,7 +98,23 @@ class AlgorithmBase(WithRegister, metaclass=ABCMeta):
         log_times(self.endpoint, latencies)
 
 
+class TextModel(BaseModel):
+    text: str = Field(..., description="The text that we want to handle.")
+
+
+class ImageModel(BaseModel):
+    url: str = Field(
+        ...,
+        description="""
+The `cdn` / `cos` url of the user's image.
+> `cos` url from `qcloud` is preferred.
+"""
+    )
+
+
 __all__ = [
     "algorithms",
     "AlgorithmBase",
+    "TextModel",
+    "ImageModel"
 ]

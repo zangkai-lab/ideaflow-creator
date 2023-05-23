@@ -152,6 +152,8 @@ __all__ = [
     "use_cos",
     "verbose",
     "get_focus",
+    "pool_limit",
+    "lazy_load",
     "inject_headers",
     "redis_kwargs",
     "audit_redis_kwargs",

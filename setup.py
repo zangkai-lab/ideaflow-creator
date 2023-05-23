@@ -39,7 +39,9 @@ setup(
         "geventhttpclient",
         # 用于异步 HTTP 网络请求的 Python 库
         "aiohttp",
-        "requests"
+        "requests",
+        "torch",
+        "Pillow"
     ],
     # 额外依赖项通常是在某些特定的环境或者使用场景下才需要的，这里是在多用户的生产环境才需要
     extras_require={
