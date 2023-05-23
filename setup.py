@@ -41,7 +41,22 @@ setup(
         "aiohttp",
         "requests",
         "torch",
-        "Pillow"
+        "torchvision",
+        "Pillow",
+        "tqdm",
+        "matplotlib",
+        "onnxruntime",
+        "opencv-python",
+        "safetensors",
+        "onnx",
+        "onnx-simplifier",
+        "accelerate",
+        "dill",
+        "pathos",
+        "lmdb",
+        "mlflow",
+        "transformers",
+        "sklearn",
     ],
     # 额外依赖项通常是在某些特定的环境或者使用场景下才需要的，这里是在多用户的生产环境才需要
     extras_require={

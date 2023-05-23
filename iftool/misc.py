@@ -4,8 +4,12 @@
 """
 import os
 import json
+import dill
 import random
-
+import zipfile
+import numpy as np
+from tqdm import tqdm
+from datetime import timedelta
 """
 shutil是Python的一个标准库，提供了一些高级文件操作，包括复制、移动、删除文件或目录等
 它是"shell utilities"的缩写，这些操作相当于shell编程中的各种操作
@@ -14,7 +18,9 @@ import shutil
 import time
 import math
 import logging
-
+import hashlib
+import operator
+import unicodedata
 """
 Python中的decimal模块提供了Decimal数据类型用于浮点数的精确计算
 """
@@ -37,12 +43,595 @@ import inspect
 import threading
 
 # 用于定义抽象基类，并检查一个类是否满足抽象基类定义的接口
-from abc import abstractmethod, ABC
-from typing import Dict, Any, Optional
+from abc import abstractmethod, ABC, ABCMeta
+"""
+Callable 表示可调用的类型，例如函数或者方法
+Protocol 是 Python 3.8 引入的新特性，用于结构化类型检查；可以理解为 Protocol 是一种更灵活的接口定义方式
+Generic 是一个元类，用于定义用户自定义的泛型类。泛型类是可以接受一个或多个类型参数的类
+"""
+from typing import Dict, Any, Optional, TypeVar, Callable, Protocol, Generic, Type, List, Union, Iterable, Set
+from functools import reduce, partial
 from datetime import datetime
 from collections import OrderedDict
+from dataclasses import dataclass, Field, fields, asdict
+
+from .types import configs_type, np_dict_type
+from .constants import TIME_FORMAT
 
 
+# utils ************************************************************************************************************
+class PureFromInfoMixin:
+    def from_info(self, info: Dict[str, Any]) -> None:
+        for k, v in info.items():
+            setattr(self, k, v)
+
+
+def get_latest_workspace(root: str) -> Optional[str]:
+    if not os.path.isdir(root):
+        return None
+    all_workspaces = []
+    for stuff in os.listdir(root):
+        if not os.path.isdir(os.path.join(root, stuff)):
+            continue
+        try:
+            datetime.strptime(stuff, TIME_FORMAT)
+            all_workspaces.append(stuff)
+        except:
+            pass
+    if not all_workspaces:
+        return None
+    return os.path.join(root, sorted(all_workspaces)[-1])
+
+
+def walk(
+    root: str,
+    hierarchy_callback: Callable[[List[str], str], None],
+    filter_extensions: Optional[Set[str]] = None,
+) -> None:
+    walked = list(os.walk(root))
+    for folder, _, files in tqdm(walked, desc="folders", position=0, mininterval=1):
+        for file in tqdm(files, desc="files", position=1, leave=False, mininterval=1):
+            if filter_extensions is not None:
+                if not any(file.endswith(ext) for ext in filter_extensions):
+                    continue
+            hierarchy = folder.split(os.path.sep) + [file]
+            hierarchy_callback(hierarchy, os.path.join(folder, file))
+
+
+def grouped_into(iterable: Iterable, n: int) -> List[tuple]:
+    """Group an iterable into `n` groups."""
+
+    elements = list(iterable)
+    num_elements = len(elements)
+    num_elem_per_group = int(math.ceil(num_elements / n))
+    results: List[tuple] = []
+    split_idx = num_elements + n - n * num_elem_per_group
+    start = 0
+    for i in range(split_idx):
+        end = start + num_elem_per_group
+        results.append(tuple(elements[start:end]))
+        start = end
+    for i in range(split_idx, n):
+        end = start + num_elem_per_group - 1
+        results.append(tuple(elements[start:end]))
+        start = end
+    return results
+
+
+class DownloadProgressBar(tqdm):
+    def update_to(
+        self,
+        b: int = 1,
+        bsize: int = 1,
+        tsize: Optional[int] = None,
+    ) -> None:
+        if tsize is not None:
+            self.total = tsize
+        self.update(b * bsize - self.n)
+
+
+def prod(iterable: Iterable) -> float:
+    """Return cumulative production of an iterable."""
+
+    return float(reduce(operator.mul, iterable, 1))
+
+
+def hash_code(code: str) -> str:
+    """Return hash code for a string."""
+
+    code = code.encode()
+    return hashlib.md5(code).hexdigest()
+
+
+def is_numeric(s: Any) -> bool:
+    """Check whether `s` is a number."""
+
+    try:
+        s = float(s)
+        return True
+    except (TypeError, ValueError):
+        try:
+            unicodedata.numeric(s)
+            return True
+        except (TypeError, ValueError):
+            return False
+
+
+def hash_dict(d: Dict[str, Any]) -> str:
+    """Return a consistent hash code for an arbitrary dict."""
+
+    def _hash(_d: Dict[str, Any]) -> str:
+        sorted_keys = sorted(_d)
+        hashes = []
+        for k in sorted_keys:
+            v = _d[k]
+            if isinstance(v, dict):
+                hashes.append(_hash(v))
+            elif isinstance(v, set):
+                hashes.append(hash_code(str(sorted(v))))
+            else:
+                hashes.append(hash_code(str(v)))
+        return hash_code("".join(hashes))
+
+    return _hash(d)
+
+
+def random_hash() -> str:
+    return hash_code(str(random.random()))
+
+
+def get_requirements(fn: Any) -> List[str]:
+    if isinstance(fn, type):
+        fn = fn.__init__  # type: ignore
+    requirements = []
+    signature = inspect.signature(fn)
+    for k, param in signature.parameters.items():
+        if param.kind is inspect.Parameter.VAR_KEYWORD:
+            continue
+        if param.kind is inspect.Parameter.VAR_POSITIONAL:
+            continue
+        if param.default is not inspect.Parameter.empty:
+            continue
+        requirements.append(k)
+    return requirements
+
+
+def get_arguments(
+    *,
+    num_back: int = 0,
+    pop_class_attributes: bool = True,
+) -> Dict[str, Any]:
+    frame = inspect.currentframe().f_back  # type: ignore
+    for _ in range(num_back):
+        frame = frame.f_back
+    if frame is None:
+        raise ValueError("`get_arguments` should be called inside a frame")
+    arguments = inspect.getargvalues(frame)[-1]
+    if pop_class_attributes:
+        arguments.pop("self", None)
+        arguments.pop("__class__", None)
+    return arguments
+
+
+def prepare_workspace_from(
+    workspace: str,
+    *,
+    timeout: timedelta = timedelta(30),
+    make: bool = True,
+) -> str:
+    current_time = datetime.now()
+    if os.path.isdir(workspace):
+        for stuff in os.listdir(workspace):
+            if not os.path.isdir(os.path.join(workspace, stuff)):
+                continue
+            try:
+                stuff_time = datetime.strptime(stuff, TIME_FORMAT)
+                stuff_delta = current_time - stuff_time
+                if stuff_delta > timeout:
+                    msg = f"{stuff} will be removed (already {stuff_delta} ago)"
+                    print_warning(msg)
+                    shutil.rmtree(os.path.join(workspace, stuff))
+            except:
+                pass
+    workspace = os.path.join(workspace, current_time.strftime(TIME_FORMAT))
+    if make:
+        os.makedirs(workspace)
+    return workspace
+
+
+def get_num_positional_args(fn: Callable) -> Union[int, float]:
+    signature = inspect.signature(fn)
+    counter = 0
+    for param in signature.parameters.values():
+        if param.kind is inspect.Parameter.VAR_POSITIONAL:
+            return math.inf
+        if param.kind is inspect.Parameter.POSITIONAL_ONLY:
+            counter += 1
+        elif param.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD:
+            counter += 1
+    return counter
+
+
+class IWithRequirements:
+    @classmethod
+    def requirements(cls) -> List[str]:
+        requirements = get_requirements(cls)
+        requirements.remove("self")
+        return requirements
+
+
+# 序列化数据 **********************************************************************************************************
+TRegister = TypeVar("TRegister", bound="WithRegister", covariant=True)
+TSerializable = TypeVar("TSerializable", bound="ISerializable", covariant=True)
+TSerializableArrays = TypeVar(
+    "TSerializableArrays",
+    bound="ISerializableArrays",
+    covariant=True,
+)
+TSArrays = TypeVar("TSArrays", bound="ISerializableArrays", covariant=True)
+TSDataClass = TypeVar("TSDataClass", bound="ISerializableDataClass", covariant=True)
+TDataClass = TypeVar("TDataClass", bound="DataClassBase")
+
+
+def register_core(
+    name: str,
+    global_dict: Dict[str, type],
+    *,
+    allow_duplicate: bool = False,
+    before_register: Optional[Callable] = None,
+    after_register: Optional[Callable] = None,
+):
+    def _register(cls):
+        if before_register is not None:
+            before_register(cls)
+        registered = global_dict.get(name)
+        if registered is not None and not allow_duplicate:
+            print_warning(
+                f"'{name}' has already registered "
+                f"in the given global dict ({global_dict})"
+            )
+            return cls
+        global_dict[name] = cls
+        if after_register is not None:
+            after_register(cls)
+        return cls
+
+    return _register
+
+
+class WithRegister(Generic[TRegister]):
+    d: Dict[str, Type[TRegister]]
+    __identifier__: str
+
+    @classmethod
+    def get(cls: Type[TRegister], name: str) -> Type[TRegister]:
+        return cls.d[name]
+
+    @classmethod
+    def has(cls, name: str) -> bool:
+        return name in cls.d
+
+    @classmethod
+    def make(
+        cls: Type[TRegister],
+        name: str,
+        config: Dict[str, Any],
+        *,
+        ensure_safe: bool = False,
+    ) -> TRegister:
+        base = cls.get(name)
+        if not ensure_safe:
+            return base(**config)  # type: ignore
+        return safe_execute(base, config)
+
+    @classmethod
+    def make_multiple(
+        cls: Type[TRegister],
+        names: Union[str, List[str]],
+        configs: configs_type = None,
+        *,
+        ensure_safe: bool = False,
+    ) -> List[TRegister]:
+        if configs is None:
+            configs = {}
+        if isinstance(names, str):
+            assert isinstance(configs, dict)
+            return cls.make(names, configs, ensure_safe=ensure_safe)  # type: ignore
+        if not isinstance(configs, list):
+            configs = [configs.get(name, {}) for name in names]
+        return [
+            cls.make(name, shallow_copy_dict(config), ensure_safe=ensure_safe)
+            for name, config in zip(names, configs)
+        ]
+
+    @classmethod
+    def register(
+        cls,
+        name: str,
+        *,
+        allow_duplicate: bool = False,
+    ) -> Callable:
+        def before(cls_: Type) -> None:
+            cls_.__identifier__ = name
+
+        return register_core(
+            name,
+            cls.d,
+            allow_duplicate=allow_duplicate,
+            before_register=before,
+        )
+
+    @classmethod
+    def remove(cls, name: str) -> Callable:
+        return cls.d.pop(name)
+
+    @classmethod
+    def check_subclass(cls, name: str) -> bool:
+        return issubclass(cls.d[name], cls)
+
+
+@dataclass
+class DataClassBase(ABC):
+    @property
+    def fields(self) -> List[Field]:
+        return fields(self)
+
+    @property
+    def field_names(self) -> List[str]:
+        return [f.name for f in self.fields]
+
+    @property
+    def attributes(self) -> List[Any]:
+        return [getattr(self, name) for name in self.field_names]
+
+    def asdict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    def copy(self: TDataClass) -> TDataClass:
+        return type(self)(**shallow_copy_dict(asdict(self)))
+
+    def update_with(self: TDataClass, other: TDataClass) -> TDataClass:
+        d = update_dict(other.asdict(), self.asdict())
+        return self.__class__(**d)
+
+
+@dataclass
+class JsonPack(DataClassBase):
+    type: str
+    info: Dict[str, Any]
+
+
+class ISerializable(WithRegister, Generic[TSerializable], metaclass=ABCMeta):
+    # abstract
+
+    @abstractmethod
+    def to_info(self) -> Dict[str, Any]:
+        pass
+
+    @abstractmethod
+    def from_info(self, info: Dict[str, Any]) -> None:
+        pass
+
+    # optional callbacks
+
+    def after_load(self) -> None:
+        pass
+
+    # api
+
+    def to_pack(self) -> JsonPack:
+        return JsonPack(self.__identifier__, self.to_info())
+
+    @classmethod
+    def from_pack(cls: Type[TSerializable], pack: Dict[str, Any]) -> TSerializable:
+        obj: ISerializable = cls.make(pack["type"], {})
+        obj.from_info(pack["info"])
+        obj.after_load()
+        return obj
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_pack().asdict())
+
+    @classmethod
+    def from_json(cls: Type[TSerializable], json_string: str) -> TSerializable:
+        return cls.from_pack(json.loads(json_string))
+
+    def copy(self: TSerializable) -> TSerializable:
+        copied = self.__class__()
+        copied.from_info(shallow_copy_dict(self.to_info()))
+        return copied
+
+
+@dataclass
+class ISerializableDataClass(
+    ISerializable,
+    DataClassBase,
+    Generic[TSDataClass],
+    metaclass=ABCMeta,
+):
+    @classmethod
+    @abstractmethod
+    def d(cls) -> Dict[str, Type["ISerializableDataClass"]]:
+        pass
+
+    def to_info(self) -> Dict[str, Any]:
+        return self.asdict()
+
+    def from_info(self, info: Dict[str, Any]) -> None:
+        for k, v in info.items():
+            setattr(self, k, v)
+
+    @classmethod
+    def get(cls: Type[TRegister], name: str) -> Type[TRegister]:
+        return cls.d()[name]
+
+    @classmethod
+    def has(cls, name: str) -> bool:
+        return name in cls.d()
+
+    @classmethod
+    def register(
+        cls,
+        name: str,
+        *,
+        allow_duplicate: bool = False,
+    ) -> Callable:
+        def before(cls_: Type) -> None:
+            cls_.__identifier__ = name
+
+        return register_core(
+            name,
+            cls.d(),
+            allow_duplicate=allow_duplicate,
+            before_register=before,
+        )
+
+    @classmethod
+    def remove(cls, name: str) -> Callable:
+        return cls.d().pop(name)
+
+    @classmethod
+    def check_subclass(cls, name: str) -> bool:
+        return issubclass(cls.d()[name], cls)
+
+
+class ISerializableArrays(ISerializable, Generic[TSArrays], metaclass=ABCMeta):
+    @abstractmethod
+    def to_npd(self) -> np_dict_type:
+        pass
+
+    @abstractmethod
+    def from_npd(self, npd: np_dict_type) -> None:
+        pass
+
+    def copy(self: TSerializableArrays) -> TSerializableArrays:
+        copied: TSerializableArrays = super().copy()
+        copied.from_npd(shallow_copy_dict(self.to_npd()))
+        return copied
+
+
+class Serializer:
+    id_file: str = "id.txt"
+    info_file: str = "info.json"
+    npd_folder: str = "npd"
+
+    @classmethod
+    def save_info(
+        cls,
+        folder: str,
+        *,
+        info: Optional[Dict[str, Any]] = None,
+        serializable: Optional[ISerializable] = None,
+    ) -> None:
+        os.makedirs(folder, exist_ok=True)
+        if info is None and serializable is None:
+            raise ValueError("either `info` or `serializable` should be provided")
+        if info is None:
+            info = serializable.to_info()
+        with open(os.path.join(folder, cls.info_file), "w") as f:
+            json.dump(info, f)
+
+    @classmethod
+    def load_info(cls, folder: str) -> Dict[str, Any]:
+        return cls.try_load_info(folder, strict=True)
+
+    @classmethod
+    def try_load_info(
+        cls,
+        folder: str,
+        *,
+        strict: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        info_path = os.path.join(folder, cls.info_file)
+        if not os.path.isfile(info_path):
+            if not strict:
+                return
+            raise ValueError(f"'{info_path}' does not exist")
+        with open(info_path, "r") as f:
+            info = json.load(f)
+        return info
+
+    @classmethod
+    def save_npd(
+        cls,
+        folder: str,
+        *,
+        npd: Optional[np_dict_type] = None,
+        serializable: Optional[ISerializableArrays] = None,
+    ) -> None:
+        os.makedirs(folder, exist_ok=True)
+        if npd is None and serializable is None:
+            raise ValueError("either `npd` or `serializable` should be provided")
+        if npd is None:
+            npd = serializable.to_npd()
+        npd_folder = os.path.join(folder, cls.npd_folder)
+        os.makedirs(npd_folder, exist_ok=True)
+        for k, v in npd.items():
+            np.save(os.path.join(npd_folder, f"{k}.npy"), v)
+
+    @classmethod
+    def load_npd(cls, folder: str) -> np_dict_type:
+        os.makedirs(folder, exist_ok=True)
+        npd_folder = os.path.join(folder, cls.npd_folder)
+        if not os.path.isdir(npd_folder):
+            raise ValueError(f"'{npd_folder}' does not exist")
+        npd = {}
+        for file in os.listdir(npd_folder):
+            key = os.path.splitext(file)[0]
+            npd[key] = np.load(os.path.join(npd_folder, file))
+        return npd
+
+    @classmethod
+    def save(
+        cls,
+        folder: str,
+        serializable: ISerializable,
+        *,
+        save_npd: bool = True,
+    ) -> None:
+        cls.save_info(folder, serializable=serializable)
+        if save_npd and isinstance(serializable, ISerializableArrays):
+            cls.save_npd(folder, serializable=serializable)
+        with open(os.path.join(folder, cls.id_file), "w") as f:
+            f.write(serializable.__identifier__)
+
+    @classmethod
+    def load(
+        cls,
+        folder: str,
+        base: Type[TSerializable],
+        *,
+        swap_id: Optional[str] = None,
+        swap_info: Optional[Dict[str, Any]] = None,
+        load_npd: bool = True,
+    ) -> TSerializable:
+        serializable = cls.load_empty(folder, base, swap_id=swap_id)
+        serializable.from_info(swap_info or cls.load_info(folder))
+        if load_npd and isinstance(serializable, ISerializableArrays):
+            serializable.from_npd(cls.load_npd(folder))
+        return serializable
+
+    @classmethod
+    def load_empty(
+        cls,
+        folder: str,
+        base: Type[TSerializable],
+        *,
+        swap_id: Optional[str] = None,
+    ) -> TSerializable:
+        if swap_id is not None:
+            s_type = swap_id
+        else:
+            id_path = os.path.join(folder, cls.id_file)
+            if not os.path.isfile(id_path):
+                raise ValueError(f"cannot find '{id_path}'")
+            with open(id_path, "r") as f:
+                s_type = f.read().strip()
+        return base.make(s_type, {})
+
+
+
+# 小工具 **********************************************************************************************************
 # 字典的浅拷贝
 def shallow_copy_dict(d: dict) -> dict:
     d = d.copy()
@@ -78,6 +667,74 @@ def fix_float_to_length(num: float, length: int) -> str:
     return str_num[:length].ljust(length, "0")
 
 
+def update_dict(src_dict: dict, tgt_dict: dict) -> dict:
+    """
+    Update tgt_dict with src_dict.
+    * Notice that changes will happen only on keys which src_dict holds.
+
+    Parameters
+    ----------
+    src_dict : dict
+    tgt_dict : dict
+
+    Returns
+    -------
+    tgt_dict : dict
+
+    """
+
+    for k, v in src_dict.items():
+        tgt_v = tgt_dict.get(k)
+        if tgt_v is None:
+            tgt_dict[k] = v
+        elif not isinstance(v, dict):
+            tgt_dict[k] = v
+        else:
+            update_dict(v, tgt_v)
+    return tgt_dict
+
+
+# Fn  ***************************************************************************************************************
+TFnResponse = TypeVar("TFnResponse")
+
+
+def check_requires(fn: Any, name: str, strict: bool = True) -> bool:
+    if isinstance(fn, type):
+        fn = fn.__init__  # type: ignore
+    signature = inspect.signature(fn)
+    for k, param in signature.parameters.items():
+        if not strict and param.kind is inspect.Parameter.VAR_KEYWORD:
+            return True
+        if k == name:
+            if param.kind is inspect.Parameter.VAR_POSITIONAL:
+                return False
+            return True
+    return False
+
+
+def filter_kw(
+    fn: Callable,
+    kwargs: Dict[str, Any],
+    *,
+    strict: bool = False,
+) -> Dict[str, Any]:
+    kw = {}
+    for k, v in kwargs.items():
+        if check_requires(fn, k, strict):
+            kw[k] = v
+    return kw
+
+
+class Fn(Protocol):
+    def __call__(self, *args: Any, **kwargs: Any) -> TFnResponse:
+        pass
+
+
+def safe_execute(fn: Fn, kw: Dict[str, Any], *, strict: bool = False) -> TFnResponse:
+    return fn(**filter_kw(fn, kw, strict=strict))
+
+
+# Logging  ********************************************************************************************************
 class Incrementer:
     """
     Util class which can calculate running mean & running std efficiently.
@@ -453,6 +1110,145 @@ class LoggingMixin:
         return self
 
 
+class PureLoggingMixin:
+    """
+    Mixin class to provide (pure) logging method for base class.
+
+    Attributes
+    ----------
+    _loggers_ : dict(int, logging.Logger)
+        Recorded all loggers initialized.
+
+    _formatter_ : _Formatter
+        Formatter for all loggers.
+
+    Methods
+    ----------
+    log_msg(self, name, msg, msg_level=logging.INFO)
+        Log something to a file, with logger initialized by `name`.
+
+    log_block_msg(self, name, title, body, msg_level=logging.INFO)
+        Almost the same as `log_msg`, except adding `title` on top of `body`.
+
+    """
+
+    _name = _meta_name = None
+
+    _formatter_ = LoggingMixin._formatter_
+    _loggers_: Dict[str, logging.Logger] = {}
+    _logger_paths_: Dict[str, str] = {}
+    _timing_dict_ = {}
+
+    @property
+    def meta_suffix(self):
+        return "" if self._meta_name is None else self._meta_name
+
+    @property
+    def name_suffix(self):
+        return "" if self._name is None else f"-{self._name}"
+
+    @property
+    def meta_log_name(self):
+        return f"__meta__{self.meta_suffix}{self.name_suffix}"
+
+    @staticmethod
+    def get_logging_path(logger):
+        logging_path = None
+        for handler in logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                logging_path = handler.baseFilename
+                break
+        if logging_path is None:
+            raise ValueError(f"No FileHandler was found in given logger '{logger}'")
+        return logging_path
+
+    def _get_logger_info(self, name):
+        logger = name if isinstance(name, logging.Logger) else self._loggers_.get(name)
+        if logger is None:
+            raise ValueError(
+                f"logger for '{name}' is not defined, "
+                "please call `_setup_logger` first"
+            )
+        if isinstance(name, str):
+            logging_path = self._logger_paths_[name]
+        else:
+            logging_path = self.get_logging_path(logger)
+        return logger, os.path.dirname(logging_path), logging_path
+
+    def _setup_logger(self, name, logging_path, level=logging.DEBUG):
+        if name in self._loggers_:
+            return
+        console = logging.StreamHandler()
+        console.setLevel(logging.CRITICAL)
+        console.setFormatter(self._formatter_)
+        file_handler = logging.FileHandler(logging_path)
+        file_handler.setFormatter(self._formatter_)
+        file_handler.setLevel(level)
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.DEBUG)
+        LoggingMixin._release_handlers(logger)
+        logger.addHandler(console)
+        logger.addHandler(file_handler)
+        PureLoggingMixin._loggers_[name] = logger
+        PureLoggingMixin._logger_paths_[name] = logging_path
+        for handler in logging.getLogger().handlers:
+            handler.setLevel(logging.CRITICAL)
+        self.log_block_msg(name, "system version", sys.version)
+
+    def _log_meta_msg(self, msg, msg_level=logging.INFO, frame=None):
+        if frame is None:
+            frame = inspect.currentframe().f_back
+        self.log_msg(self.meta_log_name, msg, msg_level, frame)
+
+    def _log_with_meta(self, task_name, msg, msg_level=logging.INFO, frame=None):
+        if frame is None:
+            frame = inspect.currentframe().f_back
+        self._log_meta_msg(f"{task_name} {msg}", msg_level, frame)
+        self.log_msg(task_name, f"current task {msg}", msg_level, frame)
+
+    def log_msg(self, name, msg, msg_level=logging.INFO, frame=None):
+        logger, logging_folder, logging_path = self._get_logger_info(name)
+        with lock_manager(
+            logging_folder,
+            [logging_path],
+            clear_stuffs_after_exc=False,
+        ):
+            logger.log(
+                msg_level,
+                msg,
+                extra={
+                    "custom_prefix": "",
+                    "func_prefix": LoggingMixin._get_func_prefix(frame),
+                },
+            )
+        return logger
+
+    def log_block_msg(self, name, title, body, msg_level=logging.INFO, frame=None):
+        frame = LoggingMixin._get_func_prefix(frame, False)
+        self.log_msg(name, f"{title}\n{body}\n", msg_level, frame)
+
+    def exception(self, name, msg, frame=None):
+        logger, logging_folder, logging_path = self._get_logger_info(name)
+        with lock_manager(
+            logging_folder,
+            [logging_path],
+            clear_stuffs_after_exc=False,
+        ):
+            logger.exception(
+                msg,
+                extra={
+                    "custom_prefix": LoggingMixin.error_prefix,
+                    "func_prefix": LoggingMixin._get_func_prefix(frame),
+                },
+            )
+
+    def del_logger(self, name):
+        logger = self.log_msg(name, f"clearing up logger information of '{name}'")
+        del self._loggers_[name], self._logger_paths_[name]
+        LoggingMixin._release_handlers(logger)
+        del logger
+
+
 """
 定期刷新一个锁文件
 """
@@ -749,3 +1545,305 @@ class OPTBase(ABC):
 
         instance = self
         return _()
+
+
+# saving **************************************************************
+class Saving(LoggingMixin):
+    """
+    Util class for saving instances.
+
+    Methods
+    ----------
+    save_instance(instance, folder, log_method=None)
+        Save instance to `folder`.
+        * instance : object, instance to save.
+        * folder : str, folder to save to.
+        * log_method : {None, function}, used as `log_method` parameter in
+        `log_with_external_method` method of `LoggingMixin`.
+
+    load_instance(instance, folder, log_method=None)
+        Load instance from `folder`.
+        * instance : object, instance to load, need to be initialized.
+        * folder : str, folder to load from.
+        * log_method : {None, function}, used as `log_method` parameter in
+        `log_with_external_method` method of `LoggingMixin`.
+
+    """
+
+    delim = "^_^"
+    dill_suffix = ".pkl"
+    array_sub_folder = "__arrays"
+
+    @staticmethod
+    def _check_core(elem):
+        if isinstance(elem, dict):
+            if not Saving._check_dict(elem):
+                return False
+        if isinstance(elem, (list, tuple)):
+            if not Saving._check_list_and_tuple(elem):
+                return False
+        if not Saving._check_elem(elem):
+            return False
+        return True
+
+    @staticmethod
+    def _check_elem(elem):
+        if isinstance(elem, (type, np.generic, np.ndarray)):
+            return False
+        if callable(elem):
+            return False
+        try:
+            json.dumps({"": elem})
+            return True
+        except TypeError:
+            return False
+
+    @staticmethod
+    def _check_list_and_tuple(arr: Union[list, tuple]):
+        for elem in arr:
+            if not Saving._check_core(elem):
+                return False
+        return True
+
+    @staticmethod
+    def _check_dict(d: dict):
+        for v in d.values():
+            if not Saving._check_core(v):
+                return False
+        return True
+
+    @staticmethod
+    def save_dict(d: dict, name: str, folder: str) -> str:
+        if Saving._check_dict(d):
+            kwargs = {}
+            suffix, method, mode = ".json", json.dump, "w"
+        else:
+            kwargs = {"recurse": True}
+            suffix, method, mode = Saving.dill_suffix, dill.dump, "wb"
+        file = os.path.join(folder, f"{name}{suffix}")
+        with open(file, mode) as f:
+            method(d, f, **kwargs)
+        return os.path.abspath(file)
+
+    @staticmethod
+    def load_dict(name: str, folder: str = None):
+        if folder is None:
+            folder, name = os.path.split(name)
+        name, suffix = os.path.splitext(name)
+        if not suffix:
+            json_file = os.path.join(folder, f"{name}.json")
+            if os.path.isfile(json_file):
+                with open(json_file, "r") as f:
+                    return json.load(f)
+            dill_file = os.path.join(folder, f"{name}{Saving.dill_suffix}")
+            if os.path.isfile(dill_file):
+                with open(dill_file, "rb") as f:
+                    return dill.load(f)
+        else:
+            assert_msg = f"suffix should be either 'json' or 'pkl', {suffix} found"
+            assert suffix in {".json", ".pkl"}, assert_msg
+            name = f"{name}{suffix}"
+            file = os.path.join(folder, name)
+            if os.path.isfile(file):
+                if suffix == ".json":
+                    mode, load_method = "r", json.load
+                else:
+                    mode, load_method = "rb", dill.load
+                with open(file, mode) as f:
+                    return load_method(f)
+        raise ValueError(f"config '{name}' is not found under '{folder}' folder")
+
+    @staticmethod
+    def deep_copy_dict(d: dict):
+        tmp_folder = os.path.join(os.getcwd(), "___tmp_dict_cache___")
+        if os.path.isdir(tmp_folder):
+            shutil.rmtree(tmp_folder)
+        os.makedirs(tmp_folder)
+        dict_name = "deep_copy"
+        Saving.save_dict(d, dict_name, tmp_folder)
+        loaded_dict = Saving.load_dict(dict_name, tmp_folder)
+        shutil.rmtree(tmp_folder)
+        return loaded_dict
+
+    @staticmethod
+    def get_cache_file(instance):
+        return f"{type(instance).__name__}.pkl"
+
+    @staticmethod
+    def save_instance(instance, folder, log_method=None):
+        instance_str = str(instance)
+        Saving.log_with_external_method(
+            f"saving '{instance_str}' to '{folder}'",
+            Saving.info_prefix,
+            log_method,
+            5,
+        )
+
+        def _record_array(k, v):
+            extension = ".npy" if isinstance(v, np.ndarray) else ".lst"
+            array_attribute_dict[f"{k}{extension}"] = v
+
+        def _check_array(attr_key_, attr_value_, depth=0):
+            if isinstance(attr_value_, dict):
+                for k in list(attr_value_.keys()):
+                    v = attr_value_[k]
+                    extended_k = f"{attr_key_}{delim}{k}"
+                    if isinstance(v, dict):
+                        _check_array(extended_k, v, depth + 1)
+                    elif isinstance(v, array_types):
+                        _record_array(extended_k, v)
+                        attr_value_.pop(k)
+            if isinstance(attr_value_, array_types):
+                _record_array(attr_key_, attr_value_)
+                if depth == 0:
+                    cache_excludes.add(attr_key_)
+
+        main_file = Saving.get_cache_file(instance)
+        instance_dict = shallow_copy_dict(instance.__dict__)
+        verbose, cache_excludes = map(
+            getattr,
+            [instance] * 2,
+            ["lock_verbose", "cache_excludes"],
+            [False, set()],
+        )
+        if os.path.isdir(folder):
+            if verbose:
+                prefix = Saving.warning_prefix
+                msg = f"'{folder}' will be cleaned up when saving '{instance_str}'"
+                Saving.log_with_external_method(
+                    msg, prefix, log_method, msg_level=logging.WARNING
+                )
+            shutil.rmtree(folder)
+        save_path = os.path.join(folder, main_file)
+        array_folder = os.path.join(folder, Saving.array_sub_folder)
+        tuple(
+            map(
+                lambda folder_: os.makedirs(folder_, exist_ok=True),
+                [folder, array_folder],
+            )
+        )
+        sorted_attributes, array_attribute_dict = sorted(instance_dict), {}
+        delim, array_types = Saving.delim, (list, np.ndarray)
+        for attr_key in sorted_attributes:
+            if attr_key in cache_excludes:
+                continue
+            attr_value = instance_dict[attr_key]
+            _check_array(attr_key, attr_value)
+        cache_excludes.add("_verbose_level_")
+        with lock_manager(
+            folder,
+            [os.path.join(folder, main_file)],
+            name=instance_str,
+        ):
+            with open(save_path, "wb") as f:
+                d = {k: v for k, v in instance_dict.items() if k not in cache_excludes}
+                dill.dump(d, f, recurse=True)
+        if array_attribute_dict:
+            sorted_array_files = sorted(array_attribute_dict)
+            sorted_array_files_full_path = list(
+                map(lambda f_: os.path.join(array_folder, f_), sorted_array_files)
+            )
+            with lock_manager(
+                array_folder,
+                sorted_array_files_full_path,
+                name=f"{instance_str} (arrays)",
+            ):
+                for array_file, array_file_full_path in zip(
+                    sorted_array_files, sorted_array_files_full_path
+                ):
+                    array_value = array_attribute_dict[array_file]
+                    if array_file.endswith(".npy"):
+                        np.save(array_file_full_path, array_value)
+                    elif array_file.endswith(".lst"):
+                        with open(array_file_full_path, "wb") as f:
+                            np.save(f, array_value)
+                    else:
+                        raise ValueError(
+                            f"unrecognized file type '{array_file}' occurred"
+                        )
+
+    @staticmethod
+    def load_instance(instance, folder, *, log_method=None, verbose=True):
+        if verbose:
+            Saving.log_with_external_method(
+                f"loading '{instance}' from '{folder}'",
+                Saving.info_prefix,
+                log_method,
+                5,
+            )
+        with open(os.path.join(folder, Saving.get_cache_file(instance)), "rb") as f:
+            instance.__dict__.update(dill.load(f))
+        delim = Saving.delim
+        array_folder = os.path.join(folder, Saving.array_sub_folder)
+        for array_file in os.listdir(array_folder):
+            attr_name, attr_ext = os.path.splitext(array_file)
+            if attr_ext == ".npy":
+                load_method = partial(np.load, allow_pickle=True)
+            elif attr_ext == ".lst":
+
+                def load_method(path):
+                    return np.load(path, allow_pickle=True).tolist()
+
+            else:
+                raise ValueError(f"unrecognized file type '{array_file}' occurred")
+            array_value = load_method(os.path.join(array_folder, array_file))
+            attr_hierarchy = attr_name.split(delim)
+            if len(attr_hierarchy) == 1:
+                instance.__dict__[attr_name] = array_value
+            else:
+                hierarchy_dict = instance.__dict__
+                for attr in attr_hierarchy[:-1]:
+                    hierarchy_dict = hierarchy_dict.setdefault(attr, {})
+                hierarchy_dict[attr_hierarchy[-1]] = array_value
+
+    @staticmethod
+    def prepare_folder(instance, folder):
+        if os.path.isdir(folder):
+            instance.log_msg(
+                f"'{folder}' already exists, it will be cleared up to save our model",
+                instance.warning_prefix,
+                msg_level=logging.WARNING,
+            )
+            shutil.rmtree(folder)
+        os.makedirs(folder)
+
+    @staticmethod
+    def compress(abs_folder, remove_original=True):
+        shutil.make_archive(abs_folder, "zip", abs_folder)
+        if remove_original:
+            shutil.rmtree(abs_folder)
+
+    @staticmethod
+    def compress_loader(
+        folder: str,
+        is_compress: bool,
+        *,
+        remove_extracted: bool = True,
+        logging_mixin: Optional[LoggingMixin] = None,
+    ):
+        class _manager(context_error_handler):
+            def __enter__(self):
+                if is_compress:
+                    if os.path.isdir(folder):
+                        msg = (
+                            f"'{folder}' already exists, "
+                            "it will be cleared up to load our model"
+                        )
+                        if logging_mixin is None:
+                            print(msg)
+                        else:
+                            logging_mixin.log_msg(
+                                msg,
+                                logging_mixin.warning_prefix,
+                                msg_level=logging.WARNING,
+                            )
+                        shutil.rmtree(folder)
+                    with zipfile.ZipFile(f"{folder}.zip", "r") as zip_ref:
+                        zip_ref.extractall(folder)
+
+            def _normal_exit(self, exc_type, exc_val, exc_tb):
+                if is_compress and remove_extracted:
+                    shutil.rmtree(folder)
+
+        return _manager()
+
