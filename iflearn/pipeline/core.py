@@ -131,5 +131,4 @@ class Pipeline(IPipeline):
 
 __all__ = [
     "Pipeline",
-    "Block",
 ]

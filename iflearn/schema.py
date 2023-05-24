@@ -72,7 +72,6 @@ try:
 except:
     onnx = None
 try:
-    # 用于简化和优化ONNX模型的Python库
     from onnxsim import simplify as onnx_simplify
 
     def get_inputs(model: onnx.ModelProto) -> List[onnx.ValueInfoProto]:
@@ -374,6 +373,23 @@ class IDataBlock(PureFromInfoMixin, IBlock, ISerializable, metaclass=ABCMeta):
 
     For any class inheriting `IDataBlock`, it can be easily initialized
     with the help of the `get_arguments` function from `iftool.misc`.
+
+    Examples
+    --------
+    >>> from iftool.misc import get_arguments
+    >>>
+    >>> class MyBlock(IDataBlock):
+    >>>     def __init__(self, foo: int = 1, bar: str = "two"):
+    >>>         super().__init__(**get_arguments())
+    >>>
+    >>>     @property
+    >>>     def init_fields(self) -> List[str]:
+    >>>         return ["foo", "bar"]
+    >>>
+    >>>     ...
+    >>>
+    >>> block = MyBlock()
+    >>> print(block.foo, block.bar)  # 1 two
     """
 
     config: "DataProcessorConfig"

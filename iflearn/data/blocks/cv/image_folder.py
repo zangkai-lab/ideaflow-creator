@@ -1,5 +1,4 @@
 import os
-# dill是一个Python库，用于序列化/反序列化Python对象，并允许保存和恢复它们的状态。
 import dill
 import json
 import random
@@ -40,7 +39,6 @@ from ....constants import INPUT_KEY
 from ....constants import LABEL_KEY
 
 try:
-    # lmdb是一个内存数据库，它的数据存储在内存中，因此读取速度非常快。
     import lmdb
 except:
     lmdb = None

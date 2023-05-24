@@ -480,11 +480,11 @@ class SEBlock(Module):
         latent_channels: int,
         *,
         impl: str = "conv",
-        block_impl: str = "cflearn",
+        block_impl: str = "iflearn",
     ):
         super().__init__()
         self.in_channels = in_channels
-        if block_impl == "cflearn":
+        if block_impl == "iflearn":
             conv_base = Conv2d
             self.avg_pool = AdaptiveAvgPool2d(1)
         elif block_impl == "torch":

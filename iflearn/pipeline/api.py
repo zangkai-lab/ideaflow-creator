@@ -683,6 +683,7 @@ class DLPipelineSerializer:
 
 
 __all__ = [
+    "IEvaluationPipeline",
     "PipelineTypes",
     "TrainingPipeline",
     "DLTrainingPipeline",

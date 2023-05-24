@@ -7,24 +7,30 @@ from typing import Dict
 from typing import List
 from typing import Type
 from typing import Tuple
+from typing import Union
 from typing import Optional
 from typing import NamedTuple
-from typing import Union
-
-from iftool.misc import shallow_copy_dict, update_dict, safe_execute
+from iftool.misc import update_dict
+from iftool.misc import safe_execute
+from iftool.misc import shallow_copy_dict
 from iftool.types import tensor_dict_type
 
-from ..parameters import OPT
-from ..pipeline import TrainingPipeline, DLInferencePipeline, PipelineTypes, Pipeline
+from .models import dl_zoo_model_loaders
+from ..schema import IData
+from ..schema import DLConfig
+from ..pipeline import Pipeline
+from ..pipeline import PipelineTypes
+from ..pipeline import TrainingPipeline
+from ..pipeline import DLInferencePipeline
 from ..constants import DEFAULT_ZOO_TAG
-from ..schema import DLConfig, IData
+from ..parameters import OPT
 from ..misc.toolkit import download_model
-from .model import dl_zoo_model_loaders
 
 
 root = os.path.dirname(__file__)
 configs_root = os.path.join(root, "configs")
 TPipeline = Union[TrainingPipeline, DLInferencePipeline]
+
 
 class ParsedModel(NamedTuple):
     json_path: str
@@ -205,5 +211,4 @@ class DLZoo:
 
 __all__ = [
     "DLZoo",
-    "TPipeline",
 ]

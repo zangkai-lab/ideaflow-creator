@@ -21,10 +21,6 @@ from ..constants import PT_PREFIX
 from ..constants import SCORES_FILE
 
 try:
-    """
-    mlflow是一个开源的Python库，用于管理和跟踪机器学习项目。
-    它提供了一组API、UI和CLI工具，可以方便地记录和比较实验结果、版本控制模型和数据集、部署模型以及与其他开发人员协作等功能。
-    """
     import mlflow
     from mlflow.exceptions import MlflowException
     from mlflow.utils.mlflow_tags import MLFLOW_USER

@@ -156,14 +156,14 @@ class TorchData(IData):
     --------
     >>> train_dataset = ...
     >>> valid_dataset = None / ...
-    >>> data = cflearn.TorchData.init(config, processor_config)
+    >>> data = iflearn.TorchData.init(config, processor_config)
     >>> data.fit(train_dataset, x_valid=valid_dataset)
 
     or
 
     >>> train_dataset = ...
     >>> valid_dataset = None / ...
-    >>> data = cflearn.TorchData.build(
+    >>> data = iflearn.TorchData.build(
     >>>     train_dataset,
     >>>     valid_dataset,
     >>>     config=config,

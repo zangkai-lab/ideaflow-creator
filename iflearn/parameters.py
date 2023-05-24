@@ -1,6 +1,7 @@
 import os
 
-from typing import Any, Dict
+from typing import Any
+from typing import Dict
 from iftool.misc import OPTBase
 
 
@@ -11,7 +12,7 @@ class OPTClass(OPTBase):
 
     @property
     def env_key(self) -> str:
-        return "IFLEARN_ENV"
+        return "CFLEARN_ENV"
 
     @property
     def defaults(self) -> Dict[str, Any]:
@@ -27,6 +28,7 @@ class OPTClass(OPTBase):
 
 
 OPT = OPTClass()
+
 
 __all__ = [
     "OPT",

@@ -6,7 +6,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
-from cftool.misc import print_info
+from iftool.misc import print_info
 
 from .ocr import SpatialOCR_Module
 from .ocr import SpatialGather_Module
