@@ -22,8 +22,3 @@ from . import dist
 from . import scripts
 
 from .misc.toolkit import Initializer
-
-from pkg_resources import get_distribution
-
-pkg = get_distribution("carefree-learn")
-__version__ = pkg.version
